@@ -1,0 +1,61 @@
+name: Unzip uploaded archive
+
+# Запускается ТОЛЬКО вручную: Actions -> Unzip uploaded archive -> Run workflow.
+# Сам после загрузки ZIP НЕ срабатывает.
+# Берёт все .zip из корня репозитория, распаковывает, коммитит и запускает Build APK.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Unpack zip files from repo root
+        run: |
+          shopt -s nullglob
+          zips=(*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "В корне нет .zip файлов, делать нечего."
+            exit 0
+          fi
+
+          for z in "${zips[@]}"; do
+            echo "== Распаковываю $z =="
+            tmp=$(mktemp -d)
+            unzip -q -o "$z" -d "$tmp" -x '__MACOSX/*'
+
+            count=$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)
+            src="$tmp"
+            if [ "$count" -eq 1 ] && [ -d "$(find "$tmp" -mindepth 1 -maxdepth 1)" ]; then
+              src="$(find "$tmp" -mindepth 1 -maxdepth 1)"
+            fi
+
+            rsync -a --exclude='.github/' --exclude='__MACOSX/' "$src"/ ./
+            rm -f "$z"
+          done
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Изменений нет."
+          else
+            git commit -m "Unpack uploaded zip"
+            git push
+          fi
+
+      - name: Start Build APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run build.yml --ref "${{ github.ref_name }}" \
+            || echo "build.yml не найден. Создайте .github/workflows/build.yml вручную."
