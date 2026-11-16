@@ -3,8 +3,6 @@ name: Build APK
 on:
   push:
     branches: [main, master]
-    paths-ignore:
-      - '*.zip'   # загрузка архива сама сборку не запускает
   pull_request:
   workflow_dispatch:
 
@@ -26,6 +24,34 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: recursive
+
+      # ZIP из корня репозитория распаковывается прямо на роботе (в репозиторий ничего не коммитится).
+      - name: Unpack ZIP from repo root
+        run: |
+          shopt -s nullglob
+          zips=(*.zip)
+          for z in "${zips[@]}"; do
+            echo "== Распаковываю $z =="
+            tmp=$(mktemp -d)
+            unzip -q -o "$z" -d "$tmp" -x '__MACOSX/*'
+
+            # Если внутри архива одна общая папка, берём файлы из неё.
+            count=$(find "$tmp" -mindepth 1 -maxdepth 1 | wc -l)
+            src="$tmp"
+            if [ "$count" -eq 1 ] && [ -d "$(find "$tmp" -mindepth 1 -maxdepth 1)" ]; then
+              src="$(find "$tmp" -mindepth 1 -maxdepth 1)"
+            fi
+
+            # .github пропускаем (workflow уже на месте), остальное кладём в корень.
+            rm -rf "$src/.github" "$src/__MACOSX"
+            cp -a "$src"/. ./
+          done
+
+          if [ ! -f settings.gradle ]; then
+            echo "::error::settings.gradle не найден. Загрузите ZIP с проектом в корень репозитория."
+            ls -la
+            exit 1
+          fi
 
       # Если llama.cpp не добавлен как submodule, робот скачает его сам.
       - name: Fetch llama.cpp (if not a submodule)
